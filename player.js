@@ -1,9 +1,9 @@
 /**
- * StreamFlow Video Player
+ * Lumen Video Player
  * High-quality streaming video player with smart buffering
  */
 
-class StreamFlowPlayer {
+class LumenPlayer {
     constructor() {
         // DOM Elements
         this.urlSection = document.getElementById('urlSection');
@@ -21,6 +21,10 @@ class StreamFlowPlayer {
         this.errorOverlay = document.getElementById('errorOverlay');
         this.errorText = document.getElementById('errorText');
         this.bufferIndicator = document.getElementById('bufferIndicator');
+
+        // Video title bar
+        this.videoTitleBar = document.getElementById('videoTitleBar');
+        this.videoTitle = document.getElementById('videoTitle');
         
         // Controls
         this.controls = document.getElementById('controls');
@@ -77,6 +81,9 @@ class StreamFlowPlayer {
         // Shortcuts Modal
         this.shortcutsModal = document.getElementById('shortcutsModal');
         this.closeShortcuts = document.getElementById('closeShortcuts');
+
+        // Theme toggle
+        this.themeToggle = document.getElementById('themeToggle');
         
         // State
         this.isPlaying = false;
@@ -117,6 +124,7 @@ class StreamFlowPlayer {
         this.bindEvents();
         this.setupVideoEvents();
         this.updateVolumeUI();
+        this.initTheme();
         
         // Focus input on load
         this.urlInput.focus();
@@ -129,6 +137,37 @@ class StreamFlowPlayer {
             this.loadVideo();
         }
     }
+
+    // --- Theme (light / dark) -------------------------------------------------
+    initTheme() {
+        // The no-flash inline script in <head> already set data-theme before
+        // paint; mirror that value into state so the toggle stays in sync.
+        this.theme = document.documentElement.getAttribute('data-theme') || 'light';
+        this.applyTheme(this.theme);
+    }
+
+    applyTheme(theme) {
+        this.theme = theme === 'dark' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', this.theme);
+        if (this.themeToggle) {
+            const isDark = this.theme === 'dark';
+            const label = isDark ? 'Switch to light mode (T)' : 'Switch to dark mode (T)';
+            this.themeToggle.setAttribute('title', label);
+            this.themeToggle.setAttribute('aria-label', label);
+            this.themeToggle.setAttribute('aria-pressed', String(isDark));
+        }
+    }
+
+    toggleTheme() {
+        const next = this.theme === 'dark' ? 'light' : 'dark';
+        this.applyTheme(next);
+        try {
+            localStorage.setItem('lumen-theme', next);
+        } catch (e) {
+            // localStorage unavailable (private mode / disabled) — theme still
+            // applies for the session, it just won't persist.
+        }
+    }
     
     bindEvents() {
         // URL Input
@@ -138,6 +177,11 @@ class StreamFlowPlayer {
         });
         this.backBtn.addEventListener('click', () => this.showUrlSection());
         this.retryBtn.addEventListener('click', () => this.loadVideo());
+
+        // Theme toggle
+        if (this.themeToggle) {
+            this.themeToggle.addEventListener('click', () => this.toggleTheme());
+        }
         
         // Play Controls
         this.playPauseBtn.addEventListener('click', () => this.togglePlay());
@@ -401,6 +445,7 @@ class StreamFlowPlayer {
         this.originalUrl = this.urlInput.value.trim(); // Store original for display
         this.hideError();
         this.showPlayerSection();
+        this.setVideoTitle();
         this.showLoading();
         
         // Reset network speed tracking
@@ -1303,6 +1348,21 @@ class StreamFlowPlayer {
         }
     }
 
+    setVideoTitle() {
+        if (!this.videoTitle) return;
+        // Derive a human-friendly title from the filename: drop the extension,
+        // turn separators into spaces, and collapse whitespace.
+        const file = this.getDownloadFilename();
+        let title = file.replace(/\.[a-z0-9]{2,4}$/i, '');   // strip extension
+        title = title.replace(/[._+]+/g, ' ')                 // separators -> space
+                     .replace(/%20/gi, ' ')                   // stray encoded spaces
+                     .replace(/\s+/g, ' ')                    // collapse runs
+                     .trim();
+        const display = title || 'Video';
+        this.videoTitle.textContent = display;
+        this.videoTitle.setAttribute('title', display); // tooltip for long names
+    }
+
     triggerBlobDownload(blob, filename) {
         const url = URL.createObjectURL(blob);
         this.triggerLinkDownload(url, filename);
@@ -1424,6 +1484,10 @@ class StreamFlowPlayer {
                 e.preventDefault();
                 this.downloadVideo();
                 break;
+            case 't':
+                e.preventDefault();
+                this.toggleTheme();
+                break;
             case 'arrowleft':
             case 'j':
                 e.preventDefault();
@@ -1533,6 +1597,12 @@ class StreamFlowPlayer {
     showUrlSection() {
         this.urlSection.classList.remove('hidden');
         this.playerSection.classList.remove('active');
+
+        // Clear the video title bar
+        if (this.videoTitle) {
+            this.videoTitle.textContent = '';
+            this.videoTitle.removeAttribute('title');
+        }
         
         // Stop buffer management
         this.stopBufferManagement();
@@ -1607,7 +1677,7 @@ class StreamFlowPlayer {
 
 // Initialize player when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    window.streamFlow = new StreamFlowPlayer();
+    window.lumen = new LumenPlayer();
 });
 
 // Service Worker for offline support (optional enhancement)
