@@ -661,6 +661,11 @@ class LumenPlayer {
     
     seekToTime(targetTime) {
         if (!this.video.duration) return;
+
+        // Preserve playback state across the seek. Seeking into an unbuffered
+        // region can make the browser stall/drop out of "playing" while it
+        // re-fetches data; capture the intent so we can resume afterward.
+        const wasPlaying = !this.video.paused && !this.video.ended;
         
         // Check if target is within buffered range
         const isBuffered = this.isTimeBuffered(targetTime);
@@ -685,6 +690,18 @@ class LumenPlayer {
         }
         
         this.video.currentTime = Math.max(0, Math.min(targetTime, this.video.duration));
+
+        // If it was playing before the seek, make sure it keeps playing.
+        if (wasPlaying) {
+            const resume = () => {
+                const p = this.video.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+            };
+            // Resume once the seek finishes; also try immediately in case the
+            // seek completes synchronously (target already buffered).
+            this.video.addEventListener('seeked', resume, { once: true });
+            resume();
+        }
     }
     
     isTimeBuffered(time) {
