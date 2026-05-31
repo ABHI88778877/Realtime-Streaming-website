@@ -5,9 +5,9 @@
 
 const http = require('http');
 const https = require('https');
-const url = require('url');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const PORT = 4000;
 
@@ -24,7 +24,8 @@ const MIME_TYPES = {
 };
 
 const server = http.createServer(async (req, res) => {
-    const parsedUrl = url.parse(req.url, true);
+    // req.url is a path (e.g. "/proxy?url=..."), so parse it against a base.
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = parsedUrl.pathname;
     
     // Add CORS headers to all responses
@@ -42,7 +43,7 @@ const server = http.createServer(async (req, res) => {
     
     // Proxy endpoint: /proxy?url=VIDEO_URL
     if (pathname === '/proxy') {
-        const videoUrl = parsedUrl.query.url;
+        const videoUrl = parsedUrl.searchParams.get('url');
         
         if (!videoUrl) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -98,7 +99,13 @@ const server = http.createServer(async (req, res) => {
 
 function proxyVideo(videoUrl, clientReq, clientRes) {
     return new Promise((resolve, reject) => {
-        const parsedUrl = url.parse(videoUrl);
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(videoUrl);
+        } catch (err) {
+            reject(new Error('Invalid video URL'));
+            return;
+        }
         const protocol = parsedUrl.protocol === 'https:' ? https : http;
         
         // Forward Range header for seeking support
@@ -119,7 +126,7 @@ function proxyVideo(videoUrl, clientReq, clientRes) {
         const options = {
             hostname: parsedUrl.hostname,
             port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
-            path: parsedUrl.path,
+            path: parsedUrl.pathname + parsedUrl.search,
             method: clientReq.method || 'GET',
             headers: headers,
             timeout: 30000
@@ -206,15 +213,33 @@ function proxyVideo(videoUrl, clientReq, clientRes) {
     });
 }
 
+// Find the machine's LAN IPv4 address so other devices (e.g. a phone on the
+// same Wi-Fi) can reach the server. Falls back to localhost if none is found.
+function getLanIP() {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name] || []) {
+            // Skip internal (127.0.0.1) and non-IPv4 / link-local (169.254.x) addresses
+            if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254.')) {
+                return net.address;
+            }
+        }
+    }
+    return 'localhost';
+}
+
 server.listen(PORT, () => {
+    const lanIP = getLanIP();
+    const pad = (s) => (s + ' '.repeat(40)).slice(0, 40);
     console.log(`
 ╔════════════════════════════════════════════════════════╗
 ║                                                        ║
 ║   🎬 Lumen Proxy Server                               ║
 ║                                                        ║
-║   Open:   http://localhost:${PORT}                       ║
-║   Proxy:  http://localhost:${PORT}/proxy?url=VIDEO_URL   ║
+║   On this PC:  ${pad('http://localhost:' + PORT)} ║
+║   On phone:    ${pad('http://' + lanIP + ':' + PORT)} ║
 ║                                                        ║
+║   (Phone must be on the same Wi-Fi network)            ║
 ║   Press Ctrl+C to stop                                 ║
 ║                                                        ║
 ╚════════════════════════════════════════════════════════╝
