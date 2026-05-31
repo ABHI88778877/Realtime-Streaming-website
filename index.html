@@ -257,7 +257,7 @@
                                 </div>
 
                                 <!-- Audio Tracks -->
-                                <div class="track-container audio-container" id="audioContainer" style="display: none;">
+                                <div class="track-container audio-container" id="audioContainer">
                                     <button class="ctrl-btn" id="audioBtn" title="Audio Track (A)">
                                         <svg viewBox="0 0 24 24" fill="none">
                                             <path d="M12 3v18M8 7v10M4 10v4M16 6v12M20 9v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -369,6 +369,10 @@
         </div>
     </div>
 
+    <!-- Optional streaming libraries: enable HLS (.m3u8) and DASH (.mpd) on
+         non-Safari browsers, and expose their alternate audio tracks. -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+    <script src="https://cdn.dashjs.org/v4.7.4/dash.all.min.js"></script>
     <script src="player.js"></script>
 </body>
 </html>

@@ -1272,6 +1272,26 @@ body {
     color: var(--accent);
 }
 
+/* Disabled audio control (shown greyed when only one track is available) */
+.audio-container.disabled .ctrl-btn {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.audio-container.disabled .ctrl-btn:hover {
+    background: transparent;
+    color: var(--on-video);
+}
+
+/* Empty/info note inside a track menu */
+.track-empty {
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    text-align: center;
+    white-space: nowrap;
+}
+
 /* Download progress toast */
 .download-toast {
     position: absolute;

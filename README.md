@@ -190,10 +190,10 @@ What it does:
 | MP4 | `.mp4` | Native, best support |
 | WebM | `.webm` | Native |
 | OGG | `.ogg` | Native |
-| HLS | `.m3u8` | Native in Safari; needs `hls.js` elsewhere |
-| DASH | `.mpd` | Needs `dash.js` |
+| HLS | `.m3u8` | Works in all major browsers (hls.js bundled); native in Safari |
+| DASH | `.mpd` | Works via the bundled dash.js |
 
-> `hls.js` and `dash.js` are not bundled. To enable HLS/DASH on non-Safari browsers, add their `<script>` tags to `index.html`.
+> `hls.js` and `dash.js` are loaded from a CDN, so HLS/DASH play in Chrome, Edge, and Firefox out of the box (an internet connection is needed for the libraries to load). Safari uses native HLS.
 
 ---
 
@@ -205,7 +205,7 @@ What it does:
 - **Vanilla JavaScript (ES6+)** — class-based architecture, `async/await`, the Fetch API with `AbortController`, `URLSearchParams`, and direct DOM manipulation. No libraries bundled.
 - **Web APIs used directly:** HTML5 Media API (`buffered`, `currentTime`, `playbackRate`, `audioTracks`, `textTracks`), Fullscreen API (with `webkit` fallbacks), Picture-in-Picture API, Fetch streaming (`ReadableStream`) for download progress, and Blob/Object URLs for downloads and subtitle conversion.
 - **Google Fonts** — `Outfit` (UI) and `JetBrains Mono` (numeric readouts).
-- **Optional streaming libs** (loaded only if present): [`hls.js`](https://github.com/video-dev/hls.js) for HLS, [`dash.js`](https://github.com/Dash-Industry-Forum/dash.js) for DASH.
+- **Optional streaming libs** (loaded from CDN): [`hls.js`](https://github.com/video-dev/hls.js) for HLS, [`dash.js`](https://github.com/Dash-Industry-Forum/dash.js) for DASH.
 
 **Backend (optional)**
 - **Node.js built-in modules only** — `http`, `https`, `url`, `path`, `fs`. Zero npm dependencies.
@@ -240,9 +240,9 @@ Realtime-Streaming-website/
 
 ## Browser Support
 
-- **Chrome / Edge / Firefox** — full feature set (HLS requires `hls.js`).
+- **Chrome / Edge / Firefox** — full feature set, including HLS/DASH via the bundled hls.js/dash.js.
 - **Safari** — full feature set including native HLS.
-- Picture-in-Picture and Fullscreen use standard APIs with `webkit` fallbacks. Embedded `audioTracks` switching depends on browser support and is hidden when unavailable.
+- Picture-in-Picture and Fullscreen use standard APIs with `webkit` fallbacks. The audio-track button is always shown and enables automatically when a stream carries multiple audio tracks (e.g. multi-language HLS).
 
 ---
 
@@ -254,15 +254,18 @@ Realtime-Streaming-website/
 | **`node` is not recognized** | Node.js isn't installed or isn't on your PATH. Install it from [nodejs.org](https://nodejs.org/) and reopen your terminal. |
 | **Port 4000 is already in use** | Stop the other process using the port, or change the `PORT` value near the top of `server.js`. |
 | **Proxy toggle does nothing** | The proxy only works when the page is served by `server.js`. Opening `index.html` directly disables it. |
-| **HLS/DASH won't play outside Safari** | Add the `hls.js` / `dash.js` `<script>` tags to `index.html`. |
+| **HLS/DASH won't play** | hls.js/dash.js load from a CDN, so an internet connection is required for them. Check the browser console for a blocked-script error. |
+| **Audio-track button stays greyed** | The stream only has one audio track. It enables automatically for multi-audio streams — try a multi-language HLS source (e.g. Shaka's Angel One demo). |
 | **A link worked earlier but now fails** | Some URLs (e.g. signed Google links) expire after a few hours — get a fresh link. |
 
 ---
 
 ## Limitations
 
-- HLS (outside Safari) and DASH require adding `hls.js` / `dash.js` to the page; they are not included.
+- HLS and DASH playback rely on the bundled hls.js/dash.js loaded from a CDN (internet connection required for those formats).
 - Some video URLs (e.g. signed Google URLs) expire after a few hours.
+- HLS/DASH playback depends on the CDN-hosted hls.js/dash.js, so those formats need an internet connection to load the libraries.
+- `.mkv` (Matroska) and 10-bit HEVC are not supported — the HTML5 `<video>` element can't decode them in browsers. Use MP4 (H.264), WebM, OGG, or HLS/DASH.
 - Seeking to unbuffered positions only works smoothly when the source server supports HTTP Range requests.
 - Embedded audio-track switching is limited by browser API support.
 - The proxy server is intended for **local/development use** — see security notes.
