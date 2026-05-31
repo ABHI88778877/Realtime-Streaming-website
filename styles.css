@@ -1272,13 +1272,15 @@ body {
     color: var(--accent);
 }
 
-/* Disabled audio control (shown greyed when only one track is available) */
-.audio-container.disabled .ctrl-btn {
+/* Disabled track control (shown greyed when no options are available) */
+.audio-container.disabled .ctrl-btn,
+.quality-container.disabled .ctrl-btn {
     opacity: 0.4;
     cursor: not-allowed;
 }
 
-.audio-container.disabled .ctrl-btn:hover {
+.audio-container.disabled .ctrl-btn:hover,
+.quality-container.disabled .ctrl-btn:hover {
     background: transparent;
     color: var(--on-video);
 }

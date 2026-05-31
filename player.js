@@ -44,6 +44,12 @@ class LumenPlayer {
         this.audioMenu = document.getElementById('audioMenu');
         this.audioList = document.getElementById('audioList');
 
+        // Quality controls
+        this.qualityContainer = document.getElementById('qualityContainer');
+        this.qualityBtn = document.getElementById('qualityBtn');
+        this.qualityMenu = document.getElementById('qualityMenu');
+        this.qualityList = document.getElementById('qualityList');
+
         // Subtitle controls
         this.subtitleContainer = document.getElementById('subtitleContainer');
         this.subtitleBtn = document.getElementById('subtitleBtn');
@@ -227,9 +233,20 @@ class LumenPlayer {
             e.stopPropagation();
             if (this.audioBtn.disabled) return; // greyed out when only one track
             this.subtitleMenu.classList.remove('active');
+            this.qualityMenu.classList.remove('active');
             this.audioMenu.classList.toggle('active');
         });
         this.audioMenu.addEventListener('click', (e) => e.stopPropagation());
+
+        // Quality menu
+        this.qualityBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.qualityBtn.disabled) return; // greyed out when only one level
+            this.audioMenu.classList.remove('active');
+            this.subtitleMenu.classList.remove('active');
+            this.qualityMenu.classList.toggle('active');
+        });
+        this.qualityMenu.addEventListener('click', (e) => e.stopPropagation());
 
         // Subtitle menu
         this.subtitleBtn.addEventListener('click', (e) => {
@@ -245,6 +262,7 @@ class LumenPlayer {
         document.addEventListener('click', () => {
             this.audioMenu.classList.remove('active');
             this.subtitleMenu.classList.remove('active');
+            this.qualityMenu.classList.remove('active');
         });
 
         // Download
@@ -458,6 +476,8 @@ class LumenPlayer {
         // Reset the audio menu to its disabled state until the new source
         // reports its tracks (the button stays visible, just greyed out).
         this.setAudioMenuEnabled(false);
+        // Same for the quality menu.
+        this.setQualityMenuEnabled(false);
         
         // Reset network speed tracking
         this.lastBufferTime = 0;
@@ -609,10 +629,13 @@ class LumenPlayer {
                 // hls.js exposes alternate audio through its own API, not
                 // video.audioTracks — surface it in the menu.
                 this.refreshAudioTracks();
+                this.refreshQualityLevels();
             });
             // Keep the menu in sync when hls.js adds/switches audio tracks.
             hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => this.refreshAudioTracks());
             hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => this.refreshAudioTracks());
+            // Keep the quality menu in sync as levels load / switch.
+            hls.on(Hls.Events.LEVEL_SWITCHED, () => this.refreshQualityLevels());
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
                     this.showError('HLS stream error: ' + data.type);
@@ -646,6 +669,10 @@ class LumenPlayer {
             const refresh = () => this.refreshAudioTracks();
             player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, refresh);
             player.on(dashjs.MediaPlayer.events.TRACK_CHANGE_RENDERED, refresh);
+            // Quality levels are also known after stream init / on switch.
+            const refreshQuality = () => this.refreshQualityLevels();
+            player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, refreshQuality);
+            player.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, refreshQuality);
         } else {
             this.showError('DASH playback requires dash.js library.');
         }
@@ -1305,6 +1332,114 @@ class LumenPlayer {
     }
 
     // ========================================
+    // Quality / Resolution Control
+    // ========================================
+    refreshQualityLevels() {
+        // Quality levels come from the streaming library in use:
+        //   1. hls.js  — hls.levels / hls.currentLevel (-1 = Auto)
+        //   2. dash.js — bitrate list via getBitrateInfoListFor('video')
+        // Plain progressive files (MP4/WebM) have no selectable levels.
+        if (this.hls && Array.isArray(this.hls.levels) && this.hls.levels.length > 1) {
+            this.renderHlsQualityLevels();
+            return;
+        }
+        if (this.dashPlayer && typeof this.dashPlayer.getBitrateInfoListFor === 'function') {
+            const levels = this.dashPlayer.getBitrateInfoListFor('video') || [];
+            if (levels.length > 1) {
+                this.renderDashQualityLevels(levels);
+                return;
+            }
+        }
+        // No selectable quality levels — disable the control.
+        this.setQualityMenuEnabled(false);
+    }
+
+    setQualityMenuEnabled(enabled) {
+        this.qualityContainer.style.display = '';
+        if (enabled) {
+            this.qualityContainer.classList.remove('disabled');
+            this.qualityBtn.disabled = false;
+            this.qualityBtn.title = 'Quality (Q)';
+        } else {
+            this.qualityContainer.classList.add('disabled');
+            this.qualityBtn.disabled = true;
+            this.qualityBtn.title = 'Quality options unavailable for this source';
+            this.qualityMenu.classList.remove('active');
+            this.qualityList.innerHTML =
+                '<div class="track-empty">No quality options</div>';
+        }
+    }
+
+    // Build a readable label for a level (prefers height -> "1080p").
+    qualityLabel(level) {
+        if (level && level.height) return `${level.height}p`;
+        if (level && level.bitrate) return `${Math.round(level.bitrate / 1000)} kbps`;
+        return 'Unknown';
+    }
+
+    renderHlsQualityLevels() {
+        const levels = this.hls.levels;
+        const current = this.hls.currentLevel; // -1 means Auto (ABR)
+        const auto = this.hls.autoLevelEnabled;
+
+        this.setQualityMenuEnabled(true);
+        this.qualityList.innerHTML = '';
+
+        // "Auto" (adaptive) option first.
+        const autoBtn = this.createTrackOption('Auto', auto, () => {
+            this.hls.currentLevel = -1; // re-enable ABR
+            this.refreshQualityLevels();
+            this.qualityMenu.classList.remove('active');
+        });
+        this.qualityList.appendChild(autoBtn);
+
+        // Highest resolution first.
+        levels
+            .map((level, index) => ({ level, index }))
+            .sort((a, b) => (b.level.height || 0) - (a.level.height || 0))
+            .forEach(({ level, index }) => {
+                const isActive = !auto && index === current;
+                const btn = this.createTrackOption(this.qualityLabel(level), isActive, () => {
+                    this.hls.currentLevel = index; // lock to this level
+                    this.refreshQualityLevels();
+                    this.qualityMenu.classList.remove('active');
+                });
+                this.qualityList.appendChild(btn);
+            });
+    }
+
+    renderDashQualityLevels(levels) {
+        const player = this.dashPlayer;
+        // dash.js: auto switching on/off + current quality index.
+        const autoSwitch = player.getSettings()?.streaming?.abr?.autoSwitchBitrate?.video !== false;
+        const currentIndex = player.getQualityFor('video');
+
+        this.setQualityMenuEnabled(true);
+        this.qualityList.innerHTML = '';
+
+        const autoBtn = this.createTrackOption('Auto', autoSwitch, () => {
+            player.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: true } } } });
+            this.refreshQualityLevels();
+            this.qualityMenu.classList.remove('active');
+        });
+        this.qualityList.appendChild(autoBtn);
+
+        levels
+            .slice()
+            .sort((a, b) => (b.height || 0) - (a.height || 0))
+            .forEach((level) => {
+                const isActive = !autoSwitch && level.qualityIndex === currentIndex;
+                const btn = this.createTrackOption(this.qualityLabel(level), isActive, () => {
+                    player.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false } } } });
+                    player.setQualityFor('video', level.qualityIndex);
+                    this.refreshQualityLevels();
+                    this.qualityMenu.classList.remove('active');
+                });
+                this.qualityList.appendChild(btn);
+            });
+    }
+
+    // ========================================
     // Subtitle / Caption Control
     // ========================================
     refreshSubtitleTracks() {
@@ -1616,7 +1751,16 @@ class LumenPlayer {
                 e.preventDefault();
                 if (!this.audioBtn.disabled) {
                     this.subtitleMenu.classList.remove('active');
+                    this.qualityMenu.classList.remove('active');
                     this.audioMenu.classList.toggle('active');
+                }
+                break;
+            case 'q':
+                e.preventDefault();
+                if (!this.qualityBtn.disabled) {
+                    this.audioMenu.classList.remove('active');
+                    this.subtitleMenu.classList.remove('active');
+                    this.qualityMenu.classList.toggle('active');
                 }
                 break;
             case 'c':
@@ -1766,6 +1910,8 @@ class LumenPlayer {
         this.externalSubtitleUrls = [];
         this.audioContainer.style.display = 'none';
         this.audioMenu.classList.remove('active');
+        this.qualityContainer.style.display = 'none';
+        this.qualityMenu.classList.remove('active');
         this.subtitleMenu.classList.remove('active');
         this.subtitleBtn.style.color = '';
 
