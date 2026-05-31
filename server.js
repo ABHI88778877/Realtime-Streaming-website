@@ -1,5 +1,5 @@
 /**
- * StreamFlow Proxy Server
+ * Lumen Proxy Server
  * Bypasses CORS and hotlink restrictions for video streaming
  */
 
@@ -210,7 +210,7 @@ server.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════╗
 ║                                                        ║
-║   🎬 StreamFlow Proxy Server                          ║
+║   🎬 Lumen Proxy Server                               ║
 ║                                                        ║
 ║   Open:   http://localhost:${PORT}                       ║
 ║   Proxy:  http://localhost:${PORT}/proxy?url=VIDEO_URL   ║

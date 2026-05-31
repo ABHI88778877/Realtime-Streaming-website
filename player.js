@@ -1,9 +1,9 @@
 /**
- * StreamFlow Video Player
+ * Lumen Video Player
  * High-quality streaming video player with smart buffering
  */
 
-class StreamFlowPlayer {
+class LumenPlayer {
     constructor() {
         // DOM Elements
         this.urlSection = document.getElementById('urlSection');
@@ -21,6 +21,10 @@ class StreamFlowPlayer {
         this.errorOverlay = document.getElementById('errorOverlay');
         this.errorText = document.getElementById('errorText');
         this.bufferIndicator = document.getElementById('bufferIndicator');
+
+        // Video title bar
+        this.videoTitleBar = document.getElementById('videoTitleBar');
+        this.videoTitle = document.getElementById('videoTitle');
         
         // Controls
         this.controls = document.getElementById('controls');
@@ -77,6 +81,9 @@ class StreamFlowPlayer {
         // Shortcuts Modal
         this.shortcutsModal = document.getElementById('shortcutsModal');
         this.closeShortcuts = document.getElementById('closeShortcuts');
+
+        // Theme toggle
+        this.themeToggle = document.getElementById('themeToggle');
         
         // State
         this.isPlaying = false;
@@ -106,6 +113,10 @@ class StreamFlowPlayer {
         this.supportsRangeRequests = null; // null = unknown, true/false after check
         this.rangeRequestChecked = false;
 
+        // Streaming-library instances (for HLS/DASH audio-track handling)
+        this.hls = null;       // hls.js instance, when used
+        this.dashPlayer = null; // dash.js instance, when used
+
         // Track management
         this.externalSubtitleUrls = []; // blob URLs created for external subtitles (for cleanup)
         this.downloadAbortController = null; // allows cancelling an in-progress download
@@ -117,6 +128,7 @@ class StreamFlowPlayer {
         this.bindEvents();
         this.setupVideoEvents();
         this.updateVolumeUI();
+        this.initTheme();
         
         // Focus input on load
         this.urlInput.focus();
@@ -129,6 +141,37 @@ class StreamFlowPlayer {
             this.loadVideo();
         }
     }
+
+    // --- Theme (light / dark) -------------------------------------------------
+    initTheme() {
+        // The no-flash inline script in <head> already set data-theme before
+        // paint; mirror that value into state so the toggle stays in sync.
+        this.theme = document.documentElement.getAttribute('data-theme') || 'light';
+        this.applyTheme(this.theme);
+    }
+
+    applyTheme(theme) {
+        this.theme = theme === 'dark' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', this.theme);
+        if (this.themeToggle) {
+            const isDark = this.theme === 'dark';
+            const label = isDark ? 'Switch to light mode (T)' : 'Switch to dark mode (T)';
+            this.themeToggle.setAttribute('title', label);
+            this.themeToggle.setAttribute('aria-label', label);
+            this.themeToggle.setAttribute('aria-pressed', String(isDark));
+        }
+    }
+
+    toggleTheme() {
+        const next = this.theme === 'dark' ? 'light' : 'dark';
+        this.applyTheme(next);
+        try {
+            localStorage.setItem('lumen-theme', next);
+        } catch (e) {
+            // localStorage unavailable (private mode / disabled) — theme still
+            // applies for the session, it just won't persist.
+        }
+    }
     
     bindEvents() {
         // URL Input
@@ -138,6 +181,11 @@ class StreamFlowPlayer {
         });
         this.backBtn.addEventListener('click', () => this.showUrlSection());
         this.retryBtn.addEventListener('click', () => this.loadVideo());
+
+        // Theme toggle
+        if (this.themeToggle) {
+            this.themeToggle.addEventListener('click', () => this.toggleTheme());
+        }
         
         // Play Controls
         this.playPauseBtn.addEventListener('click', () => this.togglePlay());
@@ -177,6 +225,7 @@ class StreamFlowPlayer {
         // Audio track menu
         this.audioBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (this.audioBtn.disabled) return; // greyed out when only one track
             this.subtitleMenu.classList.remove('active');
             this.audioMenu.classList.toggle('active');
         });
@@ -401,7 +450,14 @@ class StreamFlowPlayer {
         this.originalUrl = this.urlInput.value.trim(); // Store original for display
         this.hideError();
         this.showPlayerSection();
+        this.setVideoTitle();
         this.showLoading();
+
+        // Tear down any previous streaming-library instance before loading anew
+        this.destroyStreamingInstances();
+        // Reset the audio menu to its disabled state until the new source
+        // reports its tracks (the button stays visible, just greyed out).
+        this.setAudioMenuEnabled(false);
         
         // Reset network speed tracking
         this.lastBufferTime = 0;
@@ -529,28 +585,43 @@ class StreamFlowPlayer {
     }
     
     loadHLS(url) {
-        // Check if native HLS is supported (Safari)
-        if (this.video.canPlayType('application/vnd.apple.mpegurl')) {
-            this.video.src = url;
-            this.video.load();
-        } else if (typeof Hls !== 'undefined') {
-            // Use hls.js for other browsers
+        const nativeHls = this.video.canPlayType('application/vnd.apple.mpegurl');
+        const hlsJsSupported = typeof Hls !== 'undefined' && Hls.isSupported();
+
+        // Prefer hls.js whenever it is supported. It provides a consistent
+        // audio/subtitle-track API across browsers, whereas native HLS (notably
+        // in Chrome/Edge) often plays the stream but does NOT expose
+        // video.audioTracks — which is why the audio menu stayed disabled.
+        // Native HLS is used only as a fallback (mainly Safari/iOS).
+        if (hlsJsSupported) {
+            // Use hls.js
             const hls = new Hls({
                 maxBufferLength: 60,
                 maxMaxBufferLength: 120,
                 maxBufferSize: 60 * 1000 * 1000, // 60MB
                 maxBufferHole: 0.5,
             });
+            this.hls = hls;
             hls.loadSource(url);
             hls.attachMedia(this.video);
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 this.hideLoading();
+                // hls.js exposes alternate audio through its own API, not
+                // video.audioTracks — surface it in the menu.
+                this.refreshAudioTracks();
             });
+            // Keep the menu in sync when hls.js adds/switches audio tracks.
+            hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => this.refreshAudioTracks());
+            hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => this.refreshAudioTracks());
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
                     this.showError('HLS stream error: ' + data.type);
                 }
             });
+        } else if (nativeHls) {
+            // Native HLS fallback (Safari / iOS)
+            this.video.src = url;
+            this.video.load();
         } else {
             this.showError('HLS playback not supported. Please use Safari or add hls.js library.');
         }
@@ -559,6 +630,7 @@ class StreamFlowPlayer {
     loadDASH(url) {
         if (typeof dashjs !== 'undefined') {
             const player = dashjs.MediaPlayer().create();
+            this.dashPlayer = player;
             player.initialize(this.video, url, false);
             player.updateSettings({
                 streaming: {
@@ -569,6 +641,11 @@ class StreamFlowPlayer {
                     }
                 }
             });
+            // dash.js manages audio tracks through its own API — refresh the
+            // menu once streams are known.
+            const refresh = () => this.refreshAudioTracks();
+            player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, refresh);
+            player.on(dashjs.MediaPlayer.events.TRACK_CHANGE_RENDERED, refresh);
         } else {
             this.showError('DASH playback requires dash.js library.');
         }
@@ -616,6 +693,11 @@ class StreamFlowPlayer {
     
     seekToTime(targetTime) {
         if (!this.video.duration) return;
+
+        // Preserve playback state across the seek. Seeking into an unbuffered
+        // region can make the browser stall/drop out of "playing" while it
+        // re-fetches data; capture the intent so we can resume afterward.
+        const wasPlaying = !this.video.paused && !this.video.ended;
         
         // Check if target is within buffered range
         const isBuffered = this.isTimeBuffered(targetTime);
@@ -640,6 +722,18 @@ class StreamFlowPlayer {
         }
         
         this.video.currentTime = Math.max(0, Math.min(targetTime, this.video.duration));
+
+        // If it was playing before the seek, make sure it keeps playing.
+        if (wasPlaying) {
+            const resume = () => {
+                const p = this.video.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+            };
+            // Resume once the seek finishes; also try immediately in case the
+            // seek completes synchronously (target already buffered).
+            this.video.addEventListener('seeked', resume, { once: true });
+            resume();
+        }
     }
     
     isTimeBuffered(time) {
@@ -1088,16 +1182,111 @@ class StreamFlowPlayer {
     // ========================================
     // Audio Track Switching
     // ========================================
-    refreshAudioTracks() {
-        const tracks = this.video.audioTracks;
+    destroyStreamingInstances() {
+        // Clean up hls.js
+        if (this.hls) {
+            try { this.hls.destroy(); } catch (e) { /* ignore */ }
+            this.hls = null;
+        }
+        // Clean up dash.js
+        if (this.dashPlayer) {
+            try { this.dashPlayer.reset(); } catch (e) { /* ignore */ }
+            this.dashPlayer = null;
+        }
+    }
 
-        // audioTracks isn't supported in all browsers (notably Firefox by default)
-        if (!tracks || tracks.length <= 1) {
-            this.audioContainer.style.display = 'none';
+    refreshAudioTracks() {
+        // The audio button is ALWAYS visible. It is enabled only when there are
+        // multiple selectable audio tracks; otherwise it is shown greyed/disabled
+        // so users can see the control exists.
+        //
+        // Tracks come from one of three sources depending on playback mode:
+        //   1. hls.js   — hls.audioTracks / hls.audioTrack (HLS in non-Safari)
+        //   2. dash.js  — getTracksFor('audio') / setCurrentTrack (DASH)
+        //   3. native   — video.audioTracks (Safari HLS, some MP4 containers)
+        if (this.hls && Array.isArray(this.hls.audioTracks) && this.hls.audioTracks.length > 1) {
+            this.renderHlsAudioTracks();
             return;
         }
+        if (this.dashPlayer && typeof this.dashPlayer.getTracksFor === 'function') {
+            const dashTracks = this.dashPlayer.getTracksFor('audio') || [];
+            if (dashTracks.length > 1) {
+                this.renderDashAudioTracks(dashTracks);
+                return;
+            }
+        }
+        const native = this.video.audioTracks;
+        if (native && native.length > 1) {
+            this.renderNativeAudioTracks();
+            return;
+        }
+        // Fallback: only one track (or the API is unavailable) — disable.
+        this.setAudioMenuEnabled(false);
+    }
 
+    // Toggle the audio control between enabled and greyed-out/disabled states.
+    // The container stays visible either way.
+    setAudioMenuEnabled(enabled) {
         this.audioContainer.style.display = '';
+        if (enabled) {
+            this.audioContainer.classList.remove('disabled');
+            this.audioBtn.disabled = false;
+            this.audioBtn.title = 'Audio Track (A)';
+        } else {
+            this.audioContainer.classList.add('disabled');
+            this.audioBtn.disabled = true;
+            this.audioBtn.title = 'Only one audio track available';
+            this.audioMenu.classList.remove('active');
+            // Show an informative, non-interactive note in the menu.
+            this.audioList.innerHTML =
+                '<div class="track-empty">Only one audio track</div>';
+        }
+    }
+
+    renderHlsAudioTracks() {
+        const tracks = this.hls.audioTracks;
+        const current = this.hls.audioTrack; // currently active track id (index)
+
+        this.setAudioMenuEnabled(true);
+        this.audioList.innerHTML = '';
+
+        tracks.forEach((track, i) => {
+            const label = track.name || track.lang || `Audio ${i + 1}`;
+            const btn = this.createTrackOption(label, i === current, () => {
+                this.hls.audioTrack = i; // switch via hls.js
+                this.refreshAudioTracks();
+                this.audioMenu.classList.remove('active');
+            });
+            this.audioList.appendChild(btn);
+        });
+    }
+
+    renderDashAudioTracks(tracks) {
+        const player = this.dashPlayer;
+        const currentTrack = player.getCurrentTrackFor('audio');
+
+        this.setAudioMenuEnabled(true);
+        this.audioList.innerHTML = '';
+
+        tracks.forEach((track, i) => {
+            const label = track.labels && track.labels.length
+                ? track.labels[0].text
+                : (track.lang || `Audio ${i + 1}`);
+            const isActive = currentTrack && currentTrack.index === track.index;
+            const btn = this.createTrackOption(label, isActive, () => {
+                player.setCurrentTrack(track); // switch via dash.js
+                this.refreshAudioTracks();
+                this.audioMenu.classList.remove('active');
+            });
+            this.audioList.appendChild(btn);
+        });
+    }
+
+    renderNativeAudioTracks() {
+        const tracks = this.video.audioTracks;
+
+        // Caller guarantees tracks.length > 1 here.
+        this.setAudioMenuEnabled(true);
         this.audioList.innerHTML = '';
 
         for (let i = 0; i < tracks.length; i++) {
@@ -1303,6 +1492,21 @@ class StreamFlowPlayer {
         }
     }
 
+    setVideoTitle() {
+        if (!this.videoTitle) return;
+        // Derive a human-friendly title from the filename: drop the extension,
+        // turn separators into spaces, and collapse whitespace.
+        const file = this.getDownloadFilename();
+        let title = file.replace(/\.[a-z0-9]{2,4}$/i, '');   // strip extension
+        title = title.replace(/[._+]+/g, ' ')                 // separators -> space
+                     .replace(/%20/gi, ' ')                   // stray encoded spaces
+                     .replace(/\s+/g, ' ')                    // collapse runs
+                     .trim();
+        const display = title || 'Video';
+        this.videoTitle.textContent = display;
+        this.videoTitle.setAttribute('title', display); // tooltip for long names
+    }
+
     triggerBlobDownload(blob, filename) {
         const url = URL.createObjectURL(blob);
         this.triggerLinkDownload(url, filename);
@@ -1410,7 +1614,7 @@ class StreamFlowPlayer {
                 break;
             case 'a':
                 e.preventDefault();
-                if (this.audioContainer.style.display !== 'none') {
+                if (!this.audioBtn.disabled) {
                     this.subtitleMenu.classList.remove('active');
                     this.audioMenu.classList.toggle('active');
                 }
@@ -1423,6 +1627,10 @@ class StreamFlowPlayer {
             case 'd':
                 e.preventDefault();
                 this.downloadVideo();
+                break;
+            case 't':
+                e.preventDefault();
+                this.toggleTheme();
                 break;
             case 'arrowleft':
             case 'j':
@@ -1533,6 +1741,15 @@ class StreamFlowPlayer {
     showUrlSection() {
         this.urlSection.classList.remove('hidden');
         this.playerSection.classList.remove('active');
+
+        // Clear the video title bar
+        if (this.videoTitle) {
+            this.videoTitle.textContent = '';
+            this.videoTitle.removeAttribute('title');
+        }
+
+        // Tear down any streaming-library instance
+        this.destroyStreamingInstances();
         
         // Stop buffer management
         this.stopBufferManagement();
@@ -1607,7 +1824,7 @@ class StreamFlowPlayer {
 
 // Initialize player when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    window.streamFlow = new StreamFlowPlayer();
+    window.lumen = new LumenPlayer();
 });
 
 // Service Worker for offline support (optional enhancement)
